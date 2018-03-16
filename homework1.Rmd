@@ -1,0 +1,321 @@
+---
+title: "Machine Learning Homework 1"
+author: "Jin Miao (JMiao18)"
+date: "February 13, 2018"
+output: 
+  html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+##Task 1
+###Create a data-frame historical daily total returns from January 1st 2000 to December 31st 2016. Descriptive Statistics are shown as follows:
+
+```{r,warning=FALSE, results='hide',message=FALSE}
+mlfin = read.csv(file = "M:/A Master of Science in Marketing Sciences/MS Machine Learning/b8142c7257d20c44.csv", header = TRUE)
+
+attach(mlfin)
+mlfin$date = as.character(mlfin$date)
+mlfin$date <- as.Date(mlfin$date, "%m/%d/%Y")
+mlfin$RET = as.character(mlfin$RET)
+mlfin$RET = as.numeric(mlfin$RET)
+
+threshold1 = as.Date("12/31/2005","%m/%d/%Y")
+threshold2 = as.Date("12/31/2010","%m/%d/%Y")
+
+train1 = subset(mlfin, date <= threshold1)
+train2 = subset(mlfin, date <= threshold2 & date > threshold1)
+test = subset(mlfin, date > threshold2)
+
+library(tidyr)
+newtrain1 = subset(train1, select = -c(PERMNO))
+train1wide = spread(newtrain1, TICKER, RET)
+newtrain2 = subset(train2, select = -c(PERMNO))
+train2wide = spread(newtrain2, TICKER, RET)
+newtest = subset(test, select = -c(PERMNO))
+testwide = spread(newtest, TICKER, RET)
+rm(train1,train2,test,newtrain1,newtest,newtrain2)
+```
+
+```{r}
+summary(mlfin)
+```
+In summary, for each company, we have 4277 daily observations, starting from 2000-01-03 and ending at 2016-12-30. The best return is 57.82% and the worst one is -39.02%. RET has two missing values. 
+
+##Task 2: 
+The companies in Training Set 1 is (the first variable in output denotes the date)
+```{r, echo=FALSE}
+names(train1wide)
+```
+
+The companies in Training Set 2 is (the first variable in output denotes the date)
+```{r, echo=FALSE}
+names(train2wide)
+```
+
+The companies in Test Set is (the first variable in output denotes the date)
+```{r, echo=FALSE}
+names(testwide)
+```
+
+By comparison, we can find that "HWP" "SBC" were excluded from Dow Jones in Training Set 2 (Jan 1st, 2006), and that "ARNC" are added into Test Set (Jan 1st, 2011). In order to make predictions, "HWP" "SBC" are excluded from Training Set 1 and "ARNC" is excluded from Test Set. 
+
+```{r}
+train1wide = subset(train1wide, select = -c(HWP,SBC))
+testwide = subset(testwide, select = -c(ARNC))
+```
+
+###(a) Perform PCA on the stock returns in the Training Set 1. Print the Principal Component loadings you calculated.
+
+First, I need to deal wth missing values. There are 585 missing values for HP due to ticker change at May 2, 2002. I searched for the stock data with its former ticker "HWP" from Jan 1, 2000 to May 2, 2002.
+
+```{r,warning=FALSE, echo=FALSE,message=FALSE}
+hp_prior = read.csv(file = "M:/A Master of Science in Marketing Sciences/MS Machine Learning/a5f3bc1a54b620ff.csv", header = TRUE)
+attach(hp_prior)
+hp_prior$date = as.character(hp_prior$date)
+hp_prior$date <- as.Date(hp_prior$date, "%m/%d/%Y")
+hp_prior$RET = as.character(hp_prior$RET)
+hp_prior$RET = as.numeric(hp_prior$RET)
+train1wide$"HPQ"[1:585] = hp_prior$RET[1:585]
+```
+
+After this major change, the number of missing values in Training Set 1 is 
+```{r}
+train1_data = train1wide[,2:length(train1wide[1,])]
+sum(is.na(train1_data))
+```
+
+I choose to replace these missing values with the mean return. At this time, missing data take up less than 0.5% of the total raining Set 1, the possible bias incurred by this practice is negligible. 
+```{r}
+NA2mean <- function(x) replace(x, is.na(x), mean(x, na.rm = TRUE))
+train1_data = replace(train1_data, TRUE, lapply(train1_data, NA2mean))
+```
+
+Then I use "prcomp" function in R to conduct Principal Component Analysis. Given that all variables are stock returns, which are comparable to each other, I do not use "scale" option to standardize the data. The Scree Plot can be shown as follows:
+```{r}
+tr1pca = prcomp(train1_data, scale = FALSE)
+tr1pcaVar = tr1pca$sdev^2
+tr1pve = tr1pcaVar/sum(tr1pcaVar)
+plot(tr1pve, type = "b", main = "Scree Plot for PCA with Trainset Set 1", ylab = "Proportion of Variance Explained", xlab = "Number of Components")
+```
+
+Based on the explained variance, I choose the first three principal components, whose loading matrix is shown as follows:
+```{r}
+tr1rot = tr1pca$rotation
+tra1loading = tr1rot[,1:3]
+round(tra1loading,4)
+```
+
+###(b) Then use the estimated Principal Components loadings and apply them to Training Set 2 to create daily data for all the Principal Components for the dates in Training Set 2.
+
+First, I check the missing values.
+```{r}
+sum(is.na(train2wide))
+```
+Then, I predict the daily return using the loading matrix from PCA with Training Set 1. The first 20 days in the Training Set 2 are shown as follows:
+```{r}
+train2_data = train2wide[,2:length(train2wide[1,])]
+train2_daily_predict = as.matrix(train2_data) %*% tra1loading
+round(head(train2_daily_predict,20),4)
+```
+
+###(b)Then create a data-frame where the Y variable is the first stock's return at time t + 1 and the X variables are all the lagged Principal Components from time t to time t 􀀀 - 30. 
+
+```{r}
+lth = length(train2_data[,1])
+full = c()
+k = 2
+for (i in 31:(lth - 1))
+  {
+    df = c()
+    dat = train2wide[i,1]
+    value = train2wide[i + 1,k]
+    firm = names(train2wide)[k]
+    df = cbind(df, dat, value, firm)
+    for (j in (i - 1):(i - 30))
+    {
+      df = cbind(df, train2_daily_predict[j,1], train2_daily_predict[j,2], train2_daily_predict[j,3])
+    }
+    full = rbind(full,df)
+  }
+```
+###(c) Repeat this for all the stocks and stack these data-frames vertically (across stocks) to produce one such big data frame. 
+```{r}
+lth = length(train2_data[,1])
+fultrain = c()
+for (k in 2:length(names(train2wide)))
+{
+  full = c()
+  for (i in 31:(lth - 1))
+  {
+    df = c()
+    dat = train2wide[i,1]
+    value = train2wide[i + 1,k]
+    firm = names(train2wide)[k]
+    df = cbind(df, dat, value, firm)
+    for (j in (i - 1):(i - 30))
+    {
+      df = cbind(df, train2_daily_predict[j,1], train2_daily_predict[j,2], train2_daily_predict[j,3])
+    }
+    full = rbind(full,df)
+  }
+  fultrain = rbind(fultrain, full)
+}
+```
+Add dummy variables describing the different stocks. 
+
+```{r,message=FALSE}
+fultrain = as.data.frame(fultrain)
+fultrain[,1] = as.Date(as.numeric(fultrain[,1]), origin = "1970-01-01")
+fultrain[,2] = as.double(as.character(fultrain[,2]))
+fultrain[,3] = as.character(fultrain[,3])
+
+for (a in 4:93)
+{
+  fultrain[,a] = as.double(as.character(fultrain[,a]))
+}
+
+library(dummies)
+dful = dummy.data.frame(fultrain)
+```
+What is the dimensionality of your data-frame? Provide a printout of its 'summary()'.
+
+```{r}
+dim(dful)
+summary(dful)
+```
+Thus, there are 31928 Columns and 118 rows. 
+
+##Task 3
+###(a)Fit a Lasso model to predict the t + 1 return using the Principal Components from t to t - 30 as explanatory variables. In your data-frame above, for each each row the "Y" should be the return of a stock at t+1 and the "X"s should be all the principal components from t to t - 􀀀30 plus the stock dummy variable.
+
+```{r,message=FALSE}
+x <- model.matrix(value~.,dful)[,-c(1,2)]
+y <- dful$value
+library(ISLR)
+library(glmnet)
+grd <- 0.01^seq( 10, -2, length = 100)
+set.seed(1)
+train <- sample( 1:nrow(x),nrow(x)/2)
+test <- -train
+y.test <- y[test]
+
+lasso.mod <- glmnet( x[train, ], y[train], alpha = 1, lambda = grd)
+plot(lasso.mod)
+```
+
+###(b) Use 5-fold cross validation to do feature selection. Create a plot of the Lasso parameter vs. the MSE.
+```{r}  
+cv.out <- cv.glmnet(x[train,], y[train], alpha = 1, nfolds = 5)
+plot(cv.out)
+```
+
+Report your optimal Lasso parameter. Fit the model using the optimal Lasso lambda parameter calculated above to the whole training data and report your results.
+```{r}
+bestlam = cv.out$lambda.min
+sprintf("bestlam is %.10f", bestlam)
+trlasso.pred <- predict(cv.out, s = bestlam, newx <- x)
+sprintf("MSE is %.10f", mean((trlasso.pred - y)^2))
+```
+###(c)Are there any issues with using cross validation in a time series setting?
+
+Answer: In a time series setting, it is possible that there are significant differences between observations at different periods of time. For example, due to changes in market regulations, the outside environment and company structure during certain periods of Training Set 2 were hugely different from other periods. It would be biased to use cross validation in this setting. 
+
+##Task 4
+###(a) Use the fitted model to predict returns in the Test Set.
+
+First, I checked the missing values in Test Set and replace them with 0. 
+```{r}
+testwide[is.na(testwide)] = 0
+```
+
+Then, following the same procedure as Task 2, I calculated the principal components in the Test Set. 
+```{r}
+test_data = testwide[,2:length(testwide[1,])]
+tr1pca2 = prcomp(train2_data, scale = FALSE)
+tr1rot2 = tr1pca2$rotation
+tra1loading = tr1rot2[,1:3]
+test_daily_predict = as.matrix(test_data) %*% tra1loading
+```
+
+Then I construct the stacked dataset similar to Task 2 including the three principal components within the 30-day window (without dummies for firms).
+
+```{r}
+lth = length(test_data[,1])
+ful = c()
+for (k in 2:length(names(testwide)))
+{
+  full = c()
+  for (i in 31:(lth - 1))
+  {
+    df = c()
+    dat = testwide[i,1]
+    value = testwide[i + 1,k]
+    firm = names(testwide)[k]
+    df = cbind(df, dat, value, firm)
+    for (j in (i - 1):(i - 30))
+    {
+      df = cbind(df, test_daily_predict[j,1], test_daily_predict[j,2], test_daily_predict[j,3])
+    }
+    full = rbind(full,df)
+  }
+  ful = rbind(ful, full)
+}
+
+fultest = as.data.frame(ful)
+fultest[,1] = as.character(fultest[,1])
+fultest[,1] = as.numeric(fultest[,1])
+fultest[,1] = as.Date(fultest[,1], origin = "1970-01-01")
+fultest[,2] = as.double(as.character(fultest[,2]))
+fultest[,3] = as.character(fultest[,3])
+
+for (a in 4:93)
+{
+  fultest[,a] = as.double(as.character(fultest[,a]))
+}
+```
+
+In the Training Set 2, for each company, there are 1259 observations. In the Test Set, for each company, there are 1510 observations.
+Construct the Long/Short Portfolio for every day in the Test Set
+```{r}
+xtr <- fultrain[,-c(1,2,3)]
+ytr <- fultrain$value
+xte <- fultest[,-c(1,2,3)]
+yte <- fultest$value
+yte = matrix(yte, 1479, 26)
+
+return_predict = c()
+for (m in 0:25)
+{
+  lasso.mod <- glmnet( as.matrix(xtr)[(1 + 1228 * m) : (1228 * (m + 1)), ], ytr[(1 + 1228 * m):(1228 * (m + 1))], alpha = 1, lambda = bestlam)
+  pre = predict(lasso.mod, s = bestlam, newx <- as.matrix(xte)[(1 + 1479 * m):(1479 * (m + 1)), ])
+  return_predict = cbind(return_predict, pre)
+}
+
+lr = c()
+sr = c()
+
+for (j in 1:1479)
+{
+  indexl = order(return_predict[j,],decreasing = TRUE)[1:5]
+  indexs = order(return_predict[j,],decreasing = FALSE)[1:5]
+  long_return = yte[j,indexl]
+  lr = rbind(lr, long_return)
+  short_return = yte[j,indexs]
+  sr = rbind(sr, short_return)
+}
+head(cbind(lr,sr))
+```
+
+Evaluate the performance of this strategy. 
+```{r}
+rot = 0
+rot[] = NA
+rot[1] = 100
+for (mj in 1:1479){
+  rot[mj + 1] = rot[mj] + sum(rot[mj]/10 * ( -lr[mj,] + sr[mj,]))
+}
+plot(rot,main = "Performance Based on Cumulative Money", ylab = "Cumulative Investment", xlab = "Time")
+sprintf("The average annual return rate is %.4f", (rot[1480]/100)^(1/6)-1)
+```
