@@ -1,0 +1,224 @@
+---
+title: "Machine Learning Homework 2"
+author: "Jin Miao"
+date: "February 24, 2018"
+output: 
+  pdf_document: 
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE,cache = TRUE)
+```
+
+#Task 1
+##1.1 Load Data
+Go to the UCI ML Repository (click on the hyperlink) and download the data. There you will find two .zip files, you should use the one called "bank-additional.zip" (ignore the "bank.zip" file which is an older version of the same data). In the .zip file you dowloaded you should find and use the "bank-additional-full" .csv file. Import the bank-additional-full.csv in R Studio. You can do that either using the R Studio dataset GUI or running the command read.table(). 
+
+```{r}
+mlmkt = read.csv(file = "M:/A Master of Science in Marketing Sciences/MS Machine Learning/Homework2/bank-additional-full.csv",sep=";",header = TRUE)
+```
+##1.2 Remove Irrelevant Variables
+
+Remove the variables duration, date_of_week, month and nr.employed and explain why removing these variables makes sense. 
+```{r}
+drops <- c("month","day_of_week","duration","nr.employed")
+mlmkt = mlmkt[ , !(names(mlmkt) %in% drops)]
+```
+**Reasoning:**
+
+According to the "bank-additional-names.txt" file, the attribute information of the removed variables is shown as follows:  
+
+  1. month: last contact month of year (categorical: "jan", "feb", "mar", ..., "nov", "dec")
+  
+  2. day_of_week: last contact day of the week (categorical: "mon","tue","wed","thu","fri")
+  
+  3. duration: last contact duration, in seconds (numeric). 
+  
+  4. nr.employed: number of employees - quarterly indicator (numeric)
+
+"month" and "day_of_week" are irrelevant for the classification goal because these variables cannot provide substantive marketing insights with respects to predicting whether the client will subscribe a term deposit. 
+
+As noted by the "bank-additional-names.txt" file, "duration" is not known before a call is performed. Also, after the end of the call y is obviously known. Thus, "duration" should only be included for benchmark purposes and should be discarded if the intention is to have a realistic predictive model.
+
+I remove "nr.employed" because "emp.var.rate" (employment variation rate) has already been included. These two variables are highly correlated so including both of them results in overfitting. 
+
+##1.3 Summarize Dataset
+```{r}
+summary(mlmkt)
+```
+
+#Task 2
+##2.1 Create Input and Output Variables
+You will use the input variables (minus the variables which we deleted) to predict the output variable (whether the client subscribed for a term deposit).
+```{r}
+x <- model.matrix(y~.,mlmkt)[,-1]
+y <- mlmkt$y
+```
+##2.2 Remove Missing Values
+```{r}
+mlmkt$default[mlmkt$default == "unknown"] = NA
+mlmkt$housing[mlmkt$housing == "unknown"] = NA
+mlmkt$loan[mlmkt$loan == "unknown"] = NA
+mlmkt$job[mlmkt$job == "unknown"] = NA
+mlmkt$marital[mlmkt$marital == "unknown"] = NA
+mlmkt$loan[mlmkt$loan == "unknown"] = NA
+mlmkt$education[mlmkt$education == "unknown"] = NA
+
+mlmkt = na.omit(mlmkt)
+```
+##2.3 Reshape Categorical Variables
+```{r}
+mlmkt$job = 1 - (mlmkt$job == "unemployed")
+mlmkt$marital = mlmkt$marital == "married"
+mlmkt$marital = as.numeric(mlmkt$marital)
+
+edu = as.character(mlmkt$education)
+
+edu[edu == "illiterate"] = 0
+edu[edu == "basic.4y"] = 1
+edu[edu == "basic.6y"] = 2
+edu[edu == "basic.9y"] = 3
+edu[edu == "high.school"] = 4
+edu[edu == "professional.course"] = 5
+edu[edu == "university.degree"] = 6
+edu = as.numeric(edu)
+mlmkt$education = edu
+```
+
+#Task 3
+##3.1 Create Training and Test Set
+Now split the sample into two equal sub-samples, for training and testing. Use
+set.seed(1) and the sample() command like in the the R Lab to create a training set and a test set.
+```{r}
+set.seed(1)
+train <- sample( 1: nrow(mlmkt),nrow(mlmkt)/2)
+test <- -train
+subscription.test = mlmkt[test,]
+```
+Thus, the input for the Training Set is x[train] and the output is y[train]. The input for the Test Set is x[test] and the output is y[test].
+
+#Task 4
+##4.1 Model Fitting
+###4.1.1 Gini Tree
+Fit a simple classification tree to your training data to predict the output variable. Try using both "gini" and "deviance" as the splitting criteria; what do you observe? (hint: check out the tree.control() function). Print your trees.
+
+```{r}
+#library(tree)
+#library(ISLR)
+
+ginitree.subscription <- tree(y ~. -y  , mlmkt[train,], split = "gini", control = tree.control(nobs = 15244, mincut = 50))
+
+set.seed(33)
+prune.ginitree <- prune.misclass(ginitree.subscription, newdata = mlmkt[train,], best = 6)
+plot(prune.ginitree)
+text(prune.ginitree, pretty = 0, cex = 0.5)
+```
+
+###4.1.2 Daviance Tree
+
+```{r}
+devtree.subscription <- tree(y ~. -y  , mlmkt , subset = train, split = "deviance")
+# plot(devtree.subscription, main = "Tree Based on Deviance Splitting Creterion Before Pruning")
+# text(devtree.subscription, pretty = 0, cex = .5)
+
+set.seed(1)
+cv.subscription <- cv.tree(devtree.subscription, FUN = prune.misclass)
+par(mfrow = c(1, 2))
+plot(cv.subscription$size, cv.subscription$dev,type = "b")
+plot(cv.subscription$k, cv.subscription$dev,type = "b")
+
+set.seed(1)
+par(mfrow = c(1, 1))
+prune.devtree <- prune.misclass(devtree.subscription, best = 3)
+plot(prune.devtree, main = "Tree Based on Deviance Splitting Creterion After Pruning")
+text(prune.devtree, pretty = 0, cex = 0.5)
+
+```
+
+##4.2 Insights and Observations
+
+1. The tree based on Gini splitting creterion predicts that customer will subscribe the term deposit under the following two scenarios:
+
+*i) __pdays__  (number of days that passed by after the client was last contacted from a previous campaign) is smaller than 513 AND __previous__ (number of contacts performed before this campaign and for this client) is larger than 0.5 and smaller than 1.5;*
+
+*ii) __pdays__ (number of days that passed by after the client was last contacted from a previous campaign) is smaller than 6.5 AND __previous__ (number of contacts performed before this campaign and for this client) is larger than 2.5.*
+
+2. According to Gini splitting creterion, the most important factor in determining Deposit Subscription is __previous__ (number of contacts performed before this campaign and for this client). If __previous__ is 0, indicating no previous coorperation, then the deposit will be rejected. 
+
+2. The (pruned) tree based on Deviance splitting creterion predicts that customers will subscribe the term deposit only when __pdays__ (number of days that passed by after the client was last contacted from a previous campaign) is smaller than 513 and __euribor3m__ (euribor 3 month rate) is lower than 1.2395.
+
+2. According to Gini splitting creterion, the most important factor in determining Deposit Subscription is __euribor3m__ (euribor 3 month rate). If __euribor3m__ is too high (larger than 1.2395), then the deposit will be rejected. 
+
+
+#Task 5
+Fit a random forest to you training data and print the variable importance graph.
+```{r}
+#library(randomForest)
+#library(MASS)
+set.seed(33)
+rf.subscription <- randomForest(y~.-y, data = mlmkt, subset = train, importance = TRUE)
+importance(rf.subscription)
+```
+
+#Task 6
+Fit a boosted tree to your training data and print the variable importance graph.
+```{r}
+#library(gbm)
+set.seed(33)
+boost.subscription <- gbm(y ~.-y, data = mlmkt[train,], n.trees = 5000, distribution = "gaussian", interaction.depth = 4)
+summary(boost.subscription)
+```
+
+With a different R package __adabag__, the importance matrix is shown as follows: 
+```{r}
+#library(adabag)
+formula <- y ~.-y
+cntrl <- rpart.control(maxdepth = 1, minsplit = 0, cp = -1)
+mfinal <- 400
+data.boosting <- boosting(formula = formula,  data = mlmkt[train,], mfinal = mfinal, coeflearn = "Breiman", boos = TRUE, control = cntrl)
+data.boosting$importance
+```
+#Task 7
+##7.1 Model Comparison
+```{r}
+ginitree.pred <- predict(prune.ginitree,subscription.test,type = "class")
+y.test = subscription.test$y
+table(Prediction = ginitree.pred,Truth = y.test)
+```
+
+For the (pruned) tree method based on Gini splitting creterion, the predictive accuracy for the Test Set is `r round((13180 + 339)/15244,3)`.
+
+```{r}
+## Tree Prediction
+devtree.pred <- predict(prune.devtree,subscription.test,type = "class")
+y.test = subscription.test$y
+table(Prediction = devtree.pred, Truth = subscription.test$y)
+```
+
+For the (pruned) tree method based on Deviance splitting creterion, the predictive accuracy for the Test Set is `r round((13180 + 339)/15244,3)`.
+
+```{r}
+yhat.rf = predict(rf.subscription,newdata=mlmkt[-train,],type = "class")
+y.test = subscription.test$y
+table(Prediction = yhat.rf, Truth = y.test)
+```
+For the Random Forest method, the predictive accuracy for the Test Set is `r round((12789 + 619)/15244,3)`.
+
+```{r}
+yhat.boost <- predict(boost.subscription, newdata = mlmkt[-train, ], type = "response", n.trees = 5000)
+y.test = subscription.test$y
+predict_class <- yhat.boost > 0.5
+#table(Prediction = predict_class, Truth = y.test)
+```
+
+The Confusion Matrix for the Boosting Method is shown as follows:
+```{r}
+data.predboost <- predict.boosting(data.boosting, newdata = mlmkt[-train,])
+data.predboost$confusion
+```
+For the Boosting method, the predictive accuracy for the Test Set is `r round( 1 - data.predboost$error ,3)`.
+
+##7.2 Conclusions
+Based on the results above, the highest prediction accuracy comes from the (pruned) tree methods based on Gini/Deviance splitting creterion. The second best prediction accuracy derives from the boosted tree on the test data. Actually, the difference in predictability between simple tree and boosted tree methods is negligible. The random forest method has the lowest prediction accuracy for this study. 
+
